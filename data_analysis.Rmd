@@ -5,377 +5,1132 @@ output: pdf_document
 ---
 
 ```{r setup, echo=FALSE, warning=F, message=F}
-knitr::opts_chunk$set(echo = TRUE, fig.width=8, fig.height=4,include=F,eval=TRUE,results = F,warning=F,message=F,echo=FALSE)
+knitr::opts_chunk$set(echo = TRUE, fig.width=8, fig.height=4,include=T,
+                      eval=TRUE, results = T, warning=F, message=F, echo=T)
 options(scipen=9999)
 if(!require('pacman')) {
   install.packages('pacman')
 }
-pacman::p_load(ltm, tidyverse, car) 
+pacman::p_load(ltm, tidyverse, car, grid, ggh4x) 
 ```
 
-## Overview
+# Load data and minor data cleaning
 
 This .Rmd involves the data analysis for the experimental data.
 
 ```{r Load in data}
 # Load in data (data is available upon request)
-data <- read_csv("data_clean.csv") %>% 
-  mutate(condition = as.factor(condition),
-         starvation_threat = as.factor(starvation_threat),
-         persecution_threat = as.factor(persecution_threat))
+data_full <- read_csv("data_clean.csv") %>% 
+  mutate(no_finish = case_when(is.na(mc_imm_starv) & is.na(mc_imm_violence) 
+                               & is.na(mc_lina_starv) & is.na(mc_lina_violence) ~ 1, 
+                               TRUE ~ 0))
+```
+
+```{r Final data cleaning}
+
+count_na <- function(x){
+  sum(is.na(x))
+}
+
+# filter out respondents who didnt finish survey
+data <- data_full %>% 
+  # filter out people who didn't finish the survey --> 298 respondents (b/c people were restricted to fill out survey on laptops)
+  filter(no_finish == 0) %>% 
+  mutate(count_na = apply(.[c("DV1_lina", "DV2_policy", "DV5_voluntary_combined", 
+                              "priority_poverty", "priority_violence")], 
+                          1, count_na)) %>% 
+  # drop if they didn't answer 3 of the DV questions: only drops 2 people
+  filter(count_na < 3) # note: only 5 people didnt answer 2 
+
+# explore null values - 24 respondents didn't answer at least one question about DV
+null_values <- data %>% 
+  filter(count_na > 0) 
+
+#impute mean for remaining missing values (only 24 respondents) - results don't change if you just drop them
+data[sapply(data, is.numeric)] <- sapply(data[sapply(data, is.numeric)], 
+                                                 function(x) {
+                                                   ifelse(is.na(x), 
+                                                          mean(x, na.rm = TRUE), x)
+                                                   })
+
+# make variables callable
+attach(data)
+
+```
+
+
+
+# Minor Experimental Assessments
+
+```{r attention check and manipulation check}
+# Create sub datasets
+
+# passed attention check
+AC_1 <- data %>% 
+  filter(attention_check == 2)
+
+# 0.062 % failed attention check (93.8% of respondents passed)
+
+# passed attention and manipulation check
+AC_2 <- data %>% 
+  mutate(AC_2_val = case_when((attention_check == 2 & 
+                                mc_lina_violence_binary == 1 & 
+                                violence == 1) | 
+                                (attention_check == 2 & 
+                                mc_lina_starv_binary == 1 & 
+                                starvation == 1) |
+                                (attention_check == 2 & 
+                                control == 1) ~ 1, TRUE ~ 0)) %>% 
+  filter(AC_2_val == 1)
+
+# 0.1206 % failed either attention check or manipulation check (87.9% pass)
+  
 ```
 
 ```{r Minor Experimental Assessments}
-# Check length of survey - 4.7 minutes
+# Check length of survey - 5.25 minutes (5.316 and 5.356)
 median(data$Duration__in_seconds_)/60
+median(AC_1$Duration__in_seconds_)/60
+median(AC_2$Duration__in_seconds_)/60
 
 ##### Check reliability of survey batteries
-#DV1: Attitudes toward Hypothetical Family of Migrants - .895 good
+#DV1: Attitudes toward Hypothetical Family of Migrants - 0.897 good
 data %>% 
-  select(DV1_Q1_1,
-         DV1_Q1_2,
-         DV1_Q1_3,
-         DV1_Q1_4) %>% 
+  dplyr::select(DV1___1,
+         DV1___2,
+         DV1___3,
+         DV1___4) %>% 
   cronbach.alpha()
 
 
-#DV2: Immigration Policy Attitudes - .818 good
+#DV2: Immigration Policy Attitudes - .842 good
 data %>% 
-  select(DV2_Q2_1,
-         DV2_Q2_2,
-         DV2_Q2_3,
-         DV2_Q2_4) %>% 
+  dplyr::select(DV2___1,
+         DV2___2,
+         DV2___3,
+         priority_poverty,
+         priority_violence) %>% 
   cronbach.alpha()
 
-#dv3: Voluntariness - .832 good
+
+#dv3: Voluntariness - 0.529 bad
 data %>% 
-  select(DV3_Q4_1,
-         DV3_Q4_2) %>% 
+  dplyr::select(Q4_1,
+                Q4_2) %>% 
   cronbach.alpha()
 
-#dv3: Attribution of Responsibility - .728 somewhat low
+#dv4: blame - 0.628 decent
 data %>% 
-  select(responsibleA,
-         responsibleB) %>% 
+  dplyr::select(Q4_3,
+         Q4_4) %>% 
   cronbach.alpha()
+
+# dv5: blame and voluntariness - .745 pretty good
+data %>% 
+  dplyr::select(Q4_1,
+                Q4_2,
+                Q4_3,
+                Q4_4) %>% 
+  cronbach.alpha()
+
+detach(package:ltm,unload=TRUE)
 
 ```
 
-## Manipulation Checks:
+Some important aspects of the experiment: Average length of survey was 5.25 minutes. 93.6% of respondents passed attention check. 87.9% of respondents passed both attention check and manipulation check. Respondents only answered survey on their laptop.
+
+Cronbach's alpha levels:
+ - DV1: Attitudes toward Hypothetical Family of Migrants - 0.89 good
+ - DV2: Immigration Policy Attitudes - .84 pretty good
+ - DV3: Voluntariness - 0.53 poor
+ - DV4: Blame - 0.632 decent
+ - DV5: Voluntariness and blame combined - 0.745 decent
+
+# Descriptive Statistics
+
+```{r}
+# All respondents
+data_describe_all <- data %>% 
+  select(education, hispanic, income, gender,
+         political_party_preference) %>% 
+  skimr::skim() %>% 
+  select(2, 5, 6) %>% 
+  mutate(subset = "all")
+
+summary(data$Duration__in_seconds_) 
+
+# Descriptives by condition - control
+data_describe_control <- data %>% 
+  filter(control == 1) %>% 
+  select(education, hispanic, income, gender,
+         political_party_preference) %>% 
+  skimr::skim() %>% 
+  select(2, 5, 6) %>% 
+  mutate(subset = "control")
+
+summary(data[control == 1,]$Duration__in_seconds_)
+
+# Descriptives by condition - violence
+data_describe_violence <- data %>% 
+  filter(violence == 1) %>% 
+  select(education, hispanic, income, gender,
+         political_party_preference) %>% 
+  skimr::skim() %>% 
+  select(2, 5, 6) %>% 
+  mutate(subset = "violence")
+
+summary(data[violence == 1,]$Duration__in_seconds_)
+
+# Descriptives by condition - economic
+data_describe_economic <- data %>% 
+  filter(starvation == 1) %>% 
+  select(education, hispanic, income, gender,
+         political_party_preference) %>% 
+  skimr::skim() %>% 
+  select(2, 5, 6) %>% 
+  mutate(subset = "starvation")
+
+summary(data[starvation == 1,]$Duration__in_seconds_)
+
+# Descriptives --- didnt finish survey
+data_describe_nofinish <- data_full %>% 
+  filter(no_finish == 1) %>% 
+  select(education, hispanic, income, gender,
+         political_party_preference) %>% 
+  skimr::skim() %>% 
+  select(2, 5, 6) %>% 
+  mutate(subset = "no_finish")
+
+no_finish_respondents <- data_full %>% 
+  filter(no_finish == 1) 
+
+summary(no_finish_respondents$Duration__in_seconds_)
+
+# # Descriptives --- failed attention check
+data_describe_fail_ac <- data %>% 
+  filter(attention_check != 2) %>% 
+  select(education, hispanic, income, gender,
+         political_party_preference) %>% 
+  skimr::skim() %>% 
+  select(2, 5, 6) %>% 
+  mutate(subset = "fail_ac")
+
+summary(data[attention_check != 2,]$Duration__in_seconds_)
+
+# # Descriptives --- failed attention check and MC
+data_describe_fail_mc <- data %>% 
+  mutate(AC_2_val = case_when((attention_check == 2 & 
+                                mc_lina_violence_binary == 1 & 
+                                violence == 1) | 
+                                (attention_check == 2 & 
+                                mc_lina_starv_binary == 1 & 
+                                starvation == 1) |
+                                (attention_check == 2 & 
+                                control == 1) ~ 1, TRUE ~ 0)) %>% 
+  filter(AC_2_val == 0) %>% 
+  select(education, hispanic, income, gender,
+         political_party_preference) %>% 
+  skimr::skim() %>% 
+  select(2, 5, 6) %>% 
+  mutate(subset = "fail_mc")
+
+fail_mc_respondents <- data %>% 
+  mutate(AC_2_val = case_when((attention_check == 2 & 
+                                mc_lina_violence_binary == 1 & 
+                                violence == 1) | 
+                                (attention_check == 2 & 
+                                mc_lina_starv_binary == 1 & 
+                                starvation == 1) |
+                                (attention_check == 2 & 
+                                control == 1) ~ 1, TRUE ~ 0)) %>% 
+  filter(AC_2_val == 0)
+
+summary(fail_mc_respondents$Duration__in_seconds_)
+```
+
+
+```{r}
+descriptive_table <- rbind(data_describe_all, data_describe_nofinish, 
+                           data_describe_fail_ac, data_describe_fail_mc)
+
+descriptive_plot1 <- descriptive_table %>% 
+  ggplot(aes(x = skim_variable, y = numeric.mean, fill = subset)) +
+  geom_col(position = position_dodge()) +
+  geom_text(aes(label=subset), position=position_dodge(width=1)) +
+  labs(x = "Variable", y = "Mean", fill = "",
+       title = "Descriptive Statistics") +
+  theme_bw() +
+  coord_flip() +
+  guides(fill = "none")
+```
+
+```{r}
+pdf("descriptive_plot1.pdf")
+print(descriptive_plot1)    
+dev.off() 
+```
+
+
+```{r}
+descriptive_table2 <- rbind(data_describe_all,
+                           data_describe_control, 
+                           data_describe_violence, data_describe_economic)
+
+descriptive_plot2 <- descriptive_table2 %>% 
+  ggplot(aes(x = skim_variable, y = numeric.mean, fill = subset)) +
+  geom_col(position = position_dodge()) +
+  geom_text(aes(label=subset), position=position_dodge(width=1)) +
+  labs(x = "Variable", y = "Mean", fill = "",
+       title = "Descriptive Statistics By Condition") +
+  theme_bw() +
+  coord_flip() +
+  guides(fill = "none")
+```
+
+```{r}
+pdf("descriptive_plot2.pdf")
+print(descriptive_plot2)    
+dev.off() 
+```
+
+
+```{r}
+# check whether there is a meaningful difference between the means in some of these vars
+
+t.test(no_finish_respondents$income, data$income)
+t.test(no_finish_respondents$education, data$education)
+
+```
+
+Respondents who didn't finish the survey did have slightly lower education and income. 
+
+
+# Analysis of Main Results
+
+```{r}
+# Create function to analyze treatment effects
+analyze_results <- function(dv, dv_name, mc, inter){
+  # model
+  if (mc == TRUE & inter == FALSE) {
+    # base model
+    model <- lm(dv ~ condition,
+                data = data)
+    # effects as percentages
+    model_per <- lm(log(dv) ~ condition,
+              data=data)
+  } else if (mc == FALSE & inter == FALSE) {
+    # base model
+    model_no_covariates <- lm(dv ~ condition, data = data)
+    # covariates
+    model <- lm(dv ~ condition + political_party_preference + education,
+         data = data)
+    # effects as percentages
+    model_per <- lm(log(dv) ~ condition + political_party_preference + education,
+              data=data)
+    print(summary(model_no_covariates))
+  } else if (inter == TRUE) {
+    # interactions
+    model <- lm(dv ~ condition*political_party_preference_reduced + education,
+         data = data)
+  }
+  
+  # Anova results
+  #print(Anova(mod=model))
+
+  # Regression results
+  print(summary(model))
+  
+  # Regression results - as percent changes
+  print(summary(model_per))
+  
+  results <- summary(model)[["coefficients"]]
+  
+  mat <- matrix(nrow = 2, ncol = 4)
+  # starvation_effect
+  mat[1,1] <- "Economic Threat"
+  mat[1,2] <- round(results[2,1],3)
+  # starvation_se
+  mat[1,3] <- round(results[2,2],3)
+  # violence_effect
+  mat[2,1] <- "Violence Threat"
+  mat[2,2] <- round(results[3,1],3)
+  # starvation_se
+  mat[2,3] <-round(results[3,2],3)
+  mat[,4] <- dv_name
+  
+  return(mat)
+}
+```
+
+### Main results
+
+```{r}
+fam <- analyze_results(DV1_lina, 
+                       "Admit Into Country", FALSE, FALSE)
+
+voluntary <- analyze_results(DV3_voluntary, 
+                             "Migration Decision Involuntary", 
+                             FALSE, FALSE)
+
+blame <- analyze_results(DV4_blame, 
+                         "Immigrant Family to Blame for Situation", 
+                         FALSE, FALSE)
+
+voluntary_2 <- analyze_results(DV5_voluntary_combined, 
+                               "Attitudes Toward Immigrant Family Voluntariness", 
+                               FALSE, FALSE)
+
+imm_viol_res <- analyze_results(mc_imm_violence, 
+                            "More Immigrants Flee Violence", FALSE, FALSE)
+
+imm_starv_res <- analyze_results(mc_imm_starv, 
+                             "More Immigrants Flee Starvation", FALSE, FALSE)
+
+behavior <- analyze_results(behavior_q, 
+                            "Willingness to Donate to Immigration Organization", 
+                            FALSE, FALSE)
+### Policy Qs
+policy <- analyze_results(DV2_policy, 
+                          "Immigration Policy Index", FALSE, FALSE)
+
+priority_pov <- analyze_results(priority_poverty, "Prioritize Immigrants Facing Poverty", FALSE, FALSE)
+
+priority_v <- analyze_results(priority_violence, "Prioritize Immigrants Facing Violence", FALSE, FALSE)
+
+admit <- analyze_results(DV2___1, "Admit More Immigrants", FALSE, FALSE)
+
+deport <- analyze_results(DV2___2, "Decrease Deportations", FALSE, FALSE)
+
+risk <- analyze_results(DV2___3, "Admit Immigrants With Lives at Risk", FALSE, FALSE)
+
+```
+
+## Main plot
+
+```{r}
+# make blame negative
+blame <- as.data.frame(blame)
+colnames(blame) <- c("Condition", "Effect", "SE", "DV")
+blame <- blame %>% 
+  mutate(Effect = -as.numeric(Effect),
+         SE = -as.numeric(SE))
+blame <- as.matrix(blame)
+
+resultsmain_1 <- rbind(fam, voluntary, blame)
+resultsmain_1 <- as.data.frame(resultsmain_1)
+resultsmain_1$label <- "Attitudes Toward Immigrant Family in Article"
+colnames(resultsmain_1) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain_2 <- rbind(imm_viol_res, imm_starv_res)
+resultsmain_2 <- as.data.frame(resultsmain_2)
+resultsmain_2$label <- "Perceptions of Immigrants' Motivations"
+colnames(resultsmain_2) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain_3 <- rbind(policy, priority_pov, priority_v, admit, deport, risk)
+resultsmain_3 <- as.data.frame(resultsmain_3)
+resultsmain_3$label <- "Attitudes Toward Immigration Policy"
+colnames(resultsmain_3) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain <- rbind(resultsmain_1, resultsmain_2, resultsmain_3)
+colnames(resultsmain) <- c("Condition", "Effect", "SE", "DV","label")
+```
+
+```{r}
+main_plot <- resultsmain %>% 
+  mutate(Effect = as.numeric(Effect),
+         SE = as.numeric(SE),
+         DV = as.factor(DV),
+         DV = fct_relevel(DV, c("Admit Immigrants With Lives at Risk",
+                                "Decrease Deportations", 
+                                "Admit More Immigrants", 
+                                "Prioritize Immigrants Facing Violence",
+                                "Prioritize Immigrants Facing Poverty",
+                                "Immigration Policy Index",
+                                "More Immigrants Flee Violence",
+                                "More Immigrants Flee Starvation",
+                                "Immigrant Family to Blame for Situation",
+                                "Migration Decision Involuntary", 
+                                "Admit Into Country"))) %>% 
+  
+  ggplot(aes(y = DV, x = Effect, color = Condition)) +
+  geom_point(size = 2,position=position_dodge(width=0.5)) +
+  geom_errorbar(aes(xmin = Effect - (2*SE), xmax = Effect + (2*SE)),width=.3,
+                position=position_dodge(width=0.5)) +
+  geom_vline(xintercept = 0,
+             linetype = "longdash",
+             color = "black") +
+  # facet_wrap(~Condition) +
+  labs(title=str_wrap("Comparing the Effects of Economic and Violence Threats as Reasons for Migration",45),
+       y= "Outcome Measure",
+       x="Effect Size",
+       caption = str_wrap("Note: Treatment effects using multiple regression relative to the control condition, adjusted for education and partisanship covariates. Error bars are 95% confidence intervals.",95)
+      ) +
+  theme_bw() + # Set the heights of the panels) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 50)) +
+  facet_wrap(~label, nrow=3, scales = "free_y") +
+  theme(plot.title = element_text(hjust=0.5),
+        text = element_text(size=13),
+        legend.position="top") +
+  force_panelsizes(rows = c(2, 4, 1.5))
+
+```
+
+```{r}
+pdf("main_results.pdf")
+print(main_plot)    
+dev.off() 
+```
+
+
+## Responsibility
+
+Because low cronbach alpha, analyze these separately as well. 
+
+```{r}
+vol1 <- analyze_results(Q4_1, "vol1", FALSE, FALSE)
+vol2 <- analyze_results(Q4_2, "vol2", FALSE, FALSE)
+res1 <- analyze_results(Q4_3, "res1", FALSE, FALSE)
+res2 <- analyze_results(Q4_4, "res2", FALSE, FALSE)
+
+results2 <- rbind(vol1, vol2, res1, res2, voluntary_2)
+colnames(results2) <- c("Condition", "Effect", "SE", "DV")
+results2 <- as.data.frame(results2)
+
+```
+
+```{r}
+results2 %>% 
+  mutate(Effect = as.numeric(Effect),
+         SE = as.numeric(SE),
+         DV = as.factor(DV),
+         DV = fct_relevel(DV, c("res2",
+                                "res1", 
+                                "vol2",
+                                "vol1",
+                                "Attitudes Toward Immigrant Family Voluntariness"))) %>% 
+  
+  ggplot(aes(y = DV, x = Effect, color = Condition)) +
+  geom_point(size = 2,position=position_dodge(width=0.5)) +
+  geom_errorbar(aes(xmin = Effect - (2*SE), xmax = Effect + (2*SE)),width=.3,
+                position=position_dodge(width=0.5)) +
+  geom_vline(xintercept = 0,
+             linetype = "longdash",
+             color = "black") +
+  labs(title=str_wrap("Comparing the Effects of Economic and Violence Threats as Reasons for Migration",45),
+       y= "Outcome Measure",
+       x="Effect Size",
+       caption = str_wrap("Note: Treatment effects using multiple regression relative to the control condition, adjusted for education and partisanship covariates. Error bars are 95% confidence intervals.",95)
+      ) +
+  theme_bw() + # Set the heights of the panels) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 30)) +
+  theme(plot.title = element_text(hjust=0.5),
+        text = element_text(size=13),
+        legend.position="top")
+```
+
+## Ds and Rs
+
+```{r}
+fam_inter <- analyze_results(DV1_lina, "Attitudes Toward Immigrant Family", FALSE, TRUE)
+policy_inter <- analyze_results(DV2_policy, "Attitudes Toward Immigration Policy", FALSE, TRUE)
+voluntary_inter <- analyze_results(DV5_voluntary_combined, "Attitudes Toward Immigrant Family Voluntariness", FALSE, TRUE)
+
+results_inter <- rbind(fam_inter, voluntary_inter, policy_inter)
+colnames(results_inter) <- c("Condition", "Effect", "SE", "DV")
+results_inter <- as.data.frame(results_inter)
+```
+
+
+No interactions except: 
+ - Republican x Starvation for voluntary DV (treatment is more effective on Rs)
+ - Republican x Violence for priority violence DV (Treatment is more effective IN THE NEGATIVE DIRECTION)
+
+### Cohens D
+```{r}
+library(lsr)
+# Lina Family -starvation
+group1 <- data %>% filter(control==1) %>% dplyr::select(DV1_lina)
+group1_num <- group1$DV1_lina
+group2 <- data %>% filter(starvation==1) %>% dplyr::select(DV1_lina)
+group2_num <- group2$DV1_lina
+cohensD(group1_num, group2_num)
+# Lina Family -violence
+group1 <- data %>% filter(control==1) %>% dplyr::select(DV1_lina)
+group1_num <- group1$DV1_lina
+group2 <- data %>% filter(violence==1) %>% dplyr::select(DV1_lina)
+group2_num <- group2$DV1_lina
+cohensD(group1_num, group2_num)
+
+# Lina Family -starvation
+group1 <- data %>% filter(control==1) %>% dplyr::select(DV3_voluntary)
+group1_num <- group1$DV3_voluntary
+group2 <- data %>% filter(starvation==1) %>% dplyr::select(DV3_voluntary)
+group2_num <- group2$DV3_voluntary
+cohensD(group1_num, group2_num)
+# Lina Family -violence
+group1 <- data %>% filter(control==1) %>% dplyr::select(DV3_voluntary)
+group1_num <- group1$DV3_voluntary
+group2 <- data %>% filter(violence==1) %>% dplyr::select(DV3_voluntary)
+group2_num <- group2$DV3_voluntary
+cohensD(group1_num, group2_num)
+
+```
+
+Effect of starvation threat on family attitudes d = 0.193. Effect of violence threat on family attitudes d = 0.259. Effect of starvation threat on family attitudes d = 0.534. Effect of violence threat on family attitudes d = 0.587. 
+
+### Standardized effects
+```{r}
+library(QuantPsyc)
+model <- lm(DV1_lina ~ starvation + violence + political_party_preference + education, 
+              data=data)
+lm.beta(model)
+```
+
+### Planned contrasts
+
+```{r}
+planned_contrasts <- function(dv){
+  levels(condition)
+  contrast1 = c(-2,1,1)
+  contrast2 = c(0,-1,1)
+  
+  contrasts(data$condition) <- cbind(contrast1, contrast2)
+  
+  aov1 = aov(dv ~ condition + political_party_preference + education, 
+             data)
+  
+  print(summary.lm(aov1))
+  
+  # conditioncontrast1: this will show that the treatment (violence or starvation) increased immigration attitudes
+  # conditioncontrast2: this is the further effect comparing violence to starvation
+  
+}
+
+```
+
+```{r}
+planned_contrasts(DV1_lina)
+planned_contrasts(DV3_voluntary)
+planned_contrasts(priority_poverty)
+planned_contrasts(priority_violence)
+planned_contrasts(DV2_policy)
+planned_contrasts(behavior_q)
+```
+
+reject null for H3
+
+
+# Other plots - baseline levels
+
+```{r}
+# Plots
+plot_data <- function(dv, title, mc){
+  # control
+  means_control <- data %>%
+    filter(control == 1) %>%
+    group_by(control) %>% 
+    summarize(mean = mean({{dv}}),
+            se = sd({{dv}})/sqrt(n())) %>% 
+  select(-control)
+  means_control$condition <- "Control"
+  
+  # starvation
+  means_starv <- data %>%
+    filter(starvation == 1) %>%
+    group_by(starvation) %>% 
+    summarize(mean = mean({{dv}}),
+            se = sd({{dv}})/sqrt(n())) %>% 
+    select(-starvation)
+  means_starv$condition <- "Starvation Threat"
+  
+  # violence
+  means_viol <- data %>%
+    filter(violence == 1) %>%
+    group_by(violence) %>% 
+    summarize(mean = mean({{dv}}),
+          se = sd({{dv}})/sqrt(n())) %>% 
+    select(-violence)
+  means_viol$condition <- "Violence Threat"
+
+  # combine
+  means <- rbind(means_control, means_starv, means_viol)
+  means$condition <- as.factor(means$condition)
+  
+  if (mc == TRUE){
+    ggplot(means, aes(x=condition, y=mean, fill = condition)) + 
+      geom_col() + 
+      labs(title=title,
+           y= "Likelihood of Reason for Migrating",
+           x="Condition") + 
+    theme(plot.title = element_text(hjust=0.5),
+          text = element_text(size=10),
+          legend.position="none") +
+    coord_cartesian(ylim=c(1, 5)) +
+      geom_errorbar(aes(ymin=mean-(2*se), ymax=mean+(2*se)), width=.2,
+                 position=position_dodge(.9))
+  } else {
+    ggplot(means, aes(x=condition, y=mean, fill = condition)) + 
+      geom_col() + 
+      labs(title=title,
+           y= "Immigration Support",
+           x="Condition") + 
+    theme(plot.title = element_text(hjust=0.5),
+          text = element_text(size=10),
+    legend.position="none") +
+    coord_cartesian(ylim=c(1, 5)) +
+      geom_errorbar(aes(ymin=mean-(2*se), ymax=mean+(2*se)), width=.2,
+                 position=position_dodge(.9))
+  }
+
+
+}
+```
+
+### Attitudes toward family
+
+```{r}
+title <- "Effects of a Migrant's Reason for Migrating on Natives' Immigration Attitudes"
+data %>%
+  filter(control == 1) %>%
+  group_by(control) %>% 
+  summarize(mean = mean(DV1_lina),
+          se = sd(DV1_lina)/sqrt(n())) %>% 
+  select(-control)
+
+data %>%
+  filter(starvation == 1) %>%
+  group_by(starvation) %>% 
+  summarize(mean = mean(DV1_lina),
+          se = sd(DV1_lina)/sqrt(n())) %>% 
+  select(-starvation)
+# 3.445183
+# 0.06013493
+
+data %>%
+  filter(violence == 1) %>%
+  group_by(violence) %>% 
+  summarize(mean = mean(DV1_lina),
+          se = sd(DV1_lina)/sqrt(n())) %>% 
+  select(-violence)
+
+# 3.535804
+# 0.06189306
+
+plot_data(DV1_lina, title, FALSE)
+```
+
+### Attitudes Toward Voluntariness and Responsibility
+
+```{r}
+title <- "Effects of a Migrant's Reason for Migrating on Natives' Attitudes Toward Voluntariness"
+data %>%
+  filter(control == 1) %>%
+  group_by(control) %>% 
+  summarize(mean = mean(DV3_voluntary),
+          se = sd(DV3_voluntary)/sqrt(n())) %>% 
+  select(-control)
+
+data %>%
+  filter(starvation == 1) %>%
+  group_by(starvation) %>% 
+  summarize(mean = mean(DV3_voluntary),
+          se = sd(DV3_voluntary)/sqrt(n())) %>% 
+  select(-starvation)
+# 3.447616
+# 0.05646734
+
+data %>%
+  filter(violence == 1) %>%
+  group_by(violence) %>% 
+  summarize(mean = mean(DV3_voluntary),
+          se = sd(DV3_voluntary)/sqrt(n())) %>% 
+  select(-violence)
+#3.41695
+# 0.05913417
+
+plot_data(DV3_voluntary, title, FALSE)
+```
+
+
+### Blame
+
+```{r}
+title <- "Effects of a Migrant's Reason for Migrating on Natives' Attitudes Toward Blame Attribution"
+data %>%
+  filter(control == 1) %>%
+  group_by(control) %>% 
+  summarize(mean = mean(DV4_blame),
+          se = sd(DV4_blame)/sqrt(n())) %>% 
+  select(-control)
+
+data %>%
+  filter(starvation == 1) %>%
+  group_by(starvation) %>% 
+  summarize(mean = mean(DV4_blame),
+          se = sd(DV4_blame)/sqrt(n())) %>% 
+  select(-starvation)
+# 3.817017
+# 0.05254624
+
+data %>%
+  filter(violence == 1) %>%
+  group_by(violence) %>% 
+  summarize(mean = mean(DV4_blame),
+          se = sd(DV4_blame)/sqrt(n())) %>% 
+  select(-violence)
+# 3.979053
+# 0.05233186
+
+plot_data(DV4_blame, title, FALSE)
+```
+
+
+### Priority Questions
+
+These are interesting baselines...
+
+```{r}
+title <- "Effects of a Migrant's Reason for Migrating on Natives' Immigration Attitudes"
+plot_data(priority_poverty, title, FALSE)
+```
+
+```{r}
+title <- "Effects of a Migrant's Reason for Migrating on Natives' Immigration Attitudes"
+plot_data(priority_violence, title, FALSE)
+```
+
+```{r}
+title <- "Effects of a Migrant's Reason for Migrating on Natives' Immigration Attitudes"
+plot_data(mc_imm_violence, title, FALSE)
+```
+
+
+```{r}
+title <- "Effects of a Migrant's Reason for Migrating on Natives' Immigration Attitudes"
+plot_data(mc_imm_starv, title, FALSE)
+```
+
+
+
+# Manipulation Checks:
 
 Manipulation checks were included at the end of the survey after measuring the dependent variables. To check whether reason for migration was successfully manipulated, respondents were asked why the Lina family tried to come to the United States. Respondents were encouraged to select all options that applied, and the options ranged from (a) economic opportunity, (b) avoid starvation, (c) avoid persecution and violence, and (d) unsure.
 
-### Economic Reasons for Migrating
-
 ```{r}
-econ_mc <- lm(MC_economic ~ starvation_threat*persecution_threat,
-             data=data)
-# Regression results
-summary(econ_mc)
-# Anova results
-Anova(mod=econ_mc)
+# summary stats for MC
+# Create function to calculate mode
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+data %>% 
+  group_by(condition) %>% 
+  summarize(mode_lina_violence = Mode(mc_lina_violence),
+            mean_lina_violence = mean(mc_lina_violence),
+            mode_lina_starv = Mode(mc_lina_starv),
+            mean_lina_starv = mean(mc_lina_starv),
+            mode_imm_violence = Mode(mc_imm_violence),
+            mean_imm_violence = mean(mc_imm_violence),
+            mode_imm_starv = Mode(mc_imm_starv),
+            mean_imm_starv = mean(mc_imm_starv))
 ```
 
+```{r}
+lina_violence <- analyze_results(mc_lina_violence, "Immigrant Family Fled Violence", TRUE, FALSE)
+lina_starv <- analyze_results(mc_lina_starv, "Immigrant Family Fled Starvation", TRUE, FALSE)
 
-```{r,include = T, results=T}
-# Economic
-means_starv <- data %>%
-  group_by(starvation_threat) %>%
-  rename(var = starvation_threat) %>% 
-  dplyr::summarize(mean = mean(MC_economic))
+resultsmc <- rbind(lina_violence, lina_starv)
+colnames(resultsmc) <- c("Condition", "Effect", "SE", "DV")
+resultsmc <- as.data.frame(resultsmc)
+```
 
-means_starv$factor <- "Starvation Threat"
-
-means_pers <- data %>%
-  group_by(persecution_threat) %>%
-  rename(var = persecution_threat) %>% 
-  dplyr::summarize(mean = mean(MC_economic))
-
-means_pers$factor <- "Violence Threat"
-
-means <- rbind(means_starv,means_pers)
-means$factor <- as.factor(means$factor)
-means <- means %>% 
-  mutate(var = case_when(var == 0 ~ "Absence of Factor", TRUE ~ "Presence of Factor"))
-
-ggplot(means,aes(x=var,y=mean)) + geom_point() + 
-  geom_line(group = 1) +
-  facet_wrap(~factor) +
-    labs(title="Manipulation Check: Economic Opportunity as Reason for Migrating",y="Percent of Respondents",x="Reason for Migrating") + 
+```{r}
+resultsmc %>% 
+  mutate(Effect = as.numeric(Effect),
+         SE = as.numeric(SE),
+         DV = as.factor(DV)) %>% 
+  ggplot(aes(y = DV, x = Effect, color = Condition)) +
+  geom_point(size = 3,position=position_dodge(width=0.5)) +
+  geom_errorbar(aes(xmin = Effect - (2*SE), xmax = Effect + (2*SE)),width=.4,
+                position=position_dodge(width=0.5)) +
+  geom_vline(xintercept = 0,
+             linetype = "longdash",
+             color = "black") +
+  # facet_wrap(~Condition) +
+  labs(title=str_wrap("Manipulation Check: Why Did the Immigrant Family Flee Their Home Country?",45),
+       y= "Outcome Measure",
+       x="Effect Size") +
   theme(plot.title = element_text(hjust=0.5),
-        text = element_text(size=10)) +
-  scale_y_continuous(labels = scales::percent)
-
+          text = element_text(size=15)) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 20))
 ```
 
-The above plot shows the percentage of respondent's who selected that the Lina family traveled to the United States for "economic opportunity." Although respondents exposed to starvation threat were more likely to say that the Lina family traveled to the US for economic opportunity, the main effect of the starvation threat factor is not significant (F = 2.55, p = .111). Likewise, the main effect of persecution threat is also not significant (F = 2.49, p = .115). That being said, there is a significant interaction between starvation and persecution threat (F = 7.68, p = .006). As a whole, this is suggestive evidence that respondents interpreted starvation threat as reason for migrating as similar to economic opportunity. 
-
-### Starvation as Reason for Migrating
 
 ```{r}
-starv_mc <- lm(MC_starvation ~ starvation_threat*persecution_threat,
-             data=data)
-# Regression results
-summary(starv_mc)
-# Anova results
-Anova(mod=starv_mc)
-```
-
-```{r,include = T, results=T}
-# Starvation
-
-means_starv <- data %>%
-  group_by(starvation_threat) %>%
-  rename(var = starvation_threat) %>% 
-  dplyr::summarize(mean = mean(MC_starvation))
-
-means_starv$factor <- "Starvation Threat"
-
-means_pers <- data %>%
-  group_by(persecution_threat) %>%
-  rename(var = persecution_threat) %>% 
-  dplyr::summarize(mean = mean(MC_starvation))
-
-means_pers$factor <- "Violence Threat"
-
-means <- rbind(means_starv,means_pers)
-means$factor <- as.factor(means$factor)
-means <- means %>% 
-  mutate(var = case_when(var == 0 ~ "Absence of Factor", TRUE ~ "Presence of Factor"))
-
-ggplot(means,aes(x=var,y=mean)) + geom_point() + 
-  geom_line(group = 1) +
-  facet_wrap(~factor) +
-    labs(title="Manipulation Check: Avoid Starvation as Reason for Migrating",y="Percent of Respondents",x="Reason for Migrating") + 
+resultsmc %>% 
+  mutate(Effect = as.numeric(Effect),
+         SE = as.numeric(SE),
+         DV = as.factor(DV)
+         ) %>% 
+  ggplot(aes(y = DV, x = Effect, color = Condition)) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(xmin = Effect - (2*SE), xmax = Effect + (2*SE)),width=.3) +
+  geom_vline(xintercept = 0,
+             linetype = "longdash",
+             color = "black") +
+  facet_wrap(~Condition) +
+  labs(title=str_wrap("Manipulation Check: Why Do Immigrants Flee Their Home Country?",45),
+       y= "Outcome Measure",
+       x="Effect Size") +
   theme(plot.title = element_text(hjust=0.5),
-        text = element_text(size=10)) +
-  scale_y_continuous(labels = scales::percent)
+          text = element_text(size=13),
+          legend.position="none")
 ```
 
-The above plot shows the percentage of respondent's who selected that the Lina family traveled to the United States to "avoid starvation." The main effect of the starvation threat factor is highly significant (F = 106.55, p = <.0001). None of the other factors are significant.
 
-### Avoid Violence as Reason for Migrating
+
 
 ```{r}
-pers_mc <- lm(MC_persecution ~ starvation_threat*persecution_threat,
-             data=data)
-# Regression results
-summary(pers_mc)
-# Anova results
-Anova(mod=pers_mc)
+# Analyze manipulation checks
+mc_analysis(mc_lina_violence)
+mc_analysis(mc_lina_starv)
+mc_analysis(mc_imm_violence)
+mc_analysis(mc_imm_starv)
 ```
 
-```{r,include = T, results=T}
-# Violence
+```{r}
+title <- "Manipulation Check: Violence as Lina Family Reason for Migrating"
+plot_data(mc_lina_violence, title, TRUE)
+```
 
-means_starv <- data %>%
-  group_by(starvation_threat) %>%
-  rename(var = starvation_threat) %>% 
-  dplyr::summarize(mean = mean(MC_persecution))
+```{r}
+title <- "Manipulation Check: Starvation as Lina Family Reason for Migrating"
+plot_data(mc_lina_starv, title, TRUE)
+```
 
-means_starv$factor <- "Starvation Threat"
+```{r}
+title <- "Manipulation Check: Violence as Immigrants' Reasons for Migrating"
+plot_data(mc_imm_violence, title, TRUE)
+```
 
-means_pers <- data %>%
-  group_by(persecution_threat) %>%
-  rename(var = persecution_threat) %>% 
-  dplyr::summarize(mean = mean(MC_persecution))
+```{r}
+title <- "Manipulation Check: Starvation as Immigrants' Reasons for Migrating"
+plot_data(mc_imm_starv, title, TRUE)
+```
 
-means_pers$factor <- "Violence Threat"
+# Double check main results after AC
 
-means <- rbind(means_starv,means_pers)
-means$factor <- as.factor(means$factor)
-means <- means %>% 
-  mutate(var = case_when(var == 0 ~ "Absence of Factor", TRUE ~ "Presence of Factor"))
+```{r AC1 }
+rm(data)
+data <- data.frame(AC_1)
+attach(data)
+fam <- analyze_results(DV1_lina, 
+                       "Admit Into Country", FALSE, FALSE)
 
-ggplot(means,aes(x=var,y=mean)) + geom_point() + 
-  geom_line(group = 1) +
-  facet_wrap(~factor) +
-    labs(title="Manipulation Check: Avoid Violence as Reason for Migrating",y="Percent of Respondents",x="Reason for Migrating") + 
+voluntary <- analyze_results(DV3_voluntary, 
+                             "Migration Decision Involuntary", 
+                             FALSE, FALSE)
+
+blame <- analyze_results(DV4_blame, 
+                         "Immigrant Family to Blame for Situation", 
+                         FALSE, FALSE)
+
+voluntary_2 <- analyze_results(DV5_voluntary_combined, 
+                               "Attitudes Toward Immigrant Family Voluntariness", 
+                               FALSE, FALSE)
+
+imm_viol_res <- analyze_results(mc_imm_violence, 
+                            "More Immigrants Flee Violence", FALSE, FALSE)
+
+imm_starv_res <- analyze_results(mc_imm_starv, 
+                             "More Immigrants Flee Starvation", FALSE, FALSE)
+
+behavior <- analyze_results(behavior_q, 
+                            "Willingness to Donate to Immigration Organization", 
+                            FALSE, FALSE)
+### Policy Qs
+policy <- analyze_results(DV2_policy, 
+                          "Immigration Policy Index", FALSE, FALSE)
+
+priority_pov <- analyze_results(priority_poverty, "Prioritize Immigrants Facing Poverty", FALSE, FALSE)
+
+priority_v <- analyze_results(priority_violence, "Prioritize Immigrants Facing Violence", FALSE, FALSE)
+
+admit <- analyze_results(DV2___1, "Admit More Immigrants", FALSE, FALSE)
+
+deport <- analyze_results(DV2___2, "Decrease Deportations", FALSE, FALSE)
+
+risk <- analyze_results(DV2___3, "Admit Immigrants With Lives at Risk", FALSE, FALSE)
+# make blame negative
+blame <- as.data.frame(blame)
+colnames(blame) <- c("Condition", "Effect", "SE", "DV")
+blame <- blame %>% 
+  mutate(Effect = -as.numeric(Effect),
+         SE = -as.numeric(SE))
+blame <- as.matrix(blame)
+
+resultsmain_1 <- rbind(fam, voluntary, blame)
+resultsmain_1 <- as.data.frame(resultsmain_1)
+resultsmain_1$label <- "Attitudes Toward Immigrant Family in Article"
+colnames(resultsmain_1) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain_2 <- rbind(imm_viol_res, imm_starv_res)
+resultsmain_2 <- as.data.frame(resultsmain_2)
+resultsmain_2$label <- "Perceptions of Immigrants' Motivations"
+colnames(resultsmain_2) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain_3 <- rbind(policy, priority_pov, priority_v, admit, deport, risk)
+resultsmain_3 <- as.data.frame(resultsmain_3)
+resultsmain_3$label <- "Attitudes Toward Immigration Policy"
+colnames(resultsmain_3) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain <- rbind(resultsmain_1, resultsmain_2, resultsmain_3)
+colnames(resultsmain) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain %>% 
+  mutate(Effect = as.numeric(Effect),
+         SE = as.numeric(SE),
+         DV = as.factor(DV),
+         DV = fct_relevel(DV, c("Admit Immigrants With Lives at Risk",
+                                "Decrease Deportations", 
+                                "Admit More Immigrants", 
+                                "Prioritize Immigrants Facing Violence",
+                                "Prioritize Immigrants Facing Poverty",
+                                "Immigration Policy Index",
+                                "More Immigrants Flee Violence",
+                                "More Immigrants Flee Starvation",
+                                "Immigrant Family to Blame for Situation",
+                                "Migration Decision Involuntary", 
+                                "Admit Into Country"))) %>% 
+  
+  ggplot(aes(y = DV, x = Effect, color = Condition)) +
+  geom_point(size = 2,position=position_dodge(width=0.5)) +
+  geom_errorbar(aes(xmin = Effect - (2*SE), xmax = Effect + (2*SE)),width=.3,
+                position=position_dodge(width=0.5)) +
+  geom_vline(xintercept = 0,
+             linetype = "longdash",
+             color = "black") +
+  # facet_wrap(~Condition) +
+  labs(title=str_wrap("Comparing the Effects of Economic and Violence Threats as Reasons for Migration",45),
+       y= "Outcome Measure",
+       x="Effect Size",
+       caption = str_wrap("Note: Treatment effects using multiple regression relative to the control condition, adjusted for education and partisanship covariates. Error bars are 95% confidence intervals.",95)
+      ) +
+  theme_bw() + # Set the heights of the panels) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 50)) +
+  facet_wrap(~label, nrow=3, scales = "free_y") +
   theme(plot.title = element_text(hjust=0.5),
-        text = element_text(size=10)) +
-  scale_y_continuous(labels = scales::percent)
+        text = element_text(size=13),
+        legend.position="top") +
+  force_panelsizes(rows = c(2, 4, 1.5))
+
 ```
 
-The above plot shows the percentage of respondent's who selected that the Lina family traveled to the United States to "avoid persecution and violence". The main effect of the persecution threat factor is highly significant (F = 53.05, p = <.0001). None of the other factors are significant.
+```{r AC2 }
+rm(AC1)
+data <- data.frame(AC_2)
+attach(data)
+fam <- analyze_results(DV1_lina, 
+                       "Admit Into Country", FALSE, FALSE)
 
-### Unsure Reason for Migrating
+voluntary <- analyze_results(DV3_voluntary, 
+                             "Migration Decision Involuntary", 
+                             FALSE, FALSE)
 
-```{r}
-unsure_mc <- lm(MC_unsure ~ starvation_threat*persecution_threat,
-             data=data)
-# Regression results
-summary(unsure_mc)
-# Anova results
-Anova(mod=unsure_mc)
-```
+blame <- analyze_results(DV4_blame, 
+                         "Immigrant Family to Blame for Situation", 
+                         FALSE, FALSE)
 
+voluntary_2 <- analyze_results(DV5_voluntary_combined, 
+                               "Attitudes Toward Immigrant Family Voluntariness", 
+                               FALSE, FALSE)
 
-```{r,include = T, results=T}
-# Unsure
-means_starv <- data %>%
-  group_by(starvation_threat) %>%
-  rename(var = starvation_threat) %>% 
-  dplyr::summarize(mean = mean(MC_unsure))
+imm_viol_res <- analyze_results(mc_imm_violence, 
+                            "More Immigrants Flee Violence", FALSE, FALSE)
 
-means_starv$factor <- "Starvation Threat"
+imm_starv_res <- analyze_results(mc_imm_starv, 
+                             "More Immigrants Flee Starvation", FALSE, FALSE)
 
-means_pers <- data %>%
-  group_by(persecution_threat) %>%
-  rename(var = persecution_threat) %>% 
-  dplyr::summarize(mean = mean(MC_unsure))
+behavior <- analyze_results(behavior_q, 
+                            "Willingness to Donate to Immigration Organization", 
+                            FALSE, FALSE)
+### Policy Qs
+policy <- analyze_results(DV2_policy, 
+                          "Immigration Policy Index", FALSE, FALSE)
 
-means_pers$factor <- "Violence Threat"
+priority_pov <- analyze_results(priority_poverty, "Prioritize Immigrants Facing Poverty", FALSE, FALSE)
 
-means <- rbind(means_starv,means_pers)
-means$factor <- as.factor(means$factor)
-means <- means %>% 
-  mutate(var = case_when(var == 0 ~ "Absence of Factor", TRUE ~ "Presence of Factor"))
+priority_v <- analyze_results(priority_violence, "Prioritize Immigrants Facing Violence", FALSE, FALSE)
 
-ggplot(means,aes(x=var,y=mean)) + geom_point() + 
-  geom_line(group = 1) +
-  facet_wrap(~factor) +
-    labs(title="Manipulation Check: Unsure Reason for Migrating",y="Percent of Respondents",x="Reason for Migrating") + 
+admit <- analyze_results(DV2___1, "Admit More Immigrants", FALSE, FALSE)
+
+deport <- analyze_results(DV2___2, "Decrease Deportations", FALSE, FALSE)
+
+risk <- analyze_results(DV2___3, "Admit Immigrants With Lives at Risk", FALSE, FALSE)
+# make blame negative
+blame <- as.data.frame(blame)
+colnames(blame) <- c("Condition", "Effect", "SE", "DV")
+blame <- blame %>% 
+  mutate(Effect = -as.numeric(Effect),
+         SE = -as.numeric(SE))
+blame <- as.matrix(blame)
+
+resultsmain_1 <- rbind(fam, voluntary, blame)
+resultsmain_1 <- as.data.frame(resultsmain_1)
+resultsmain_1$label <- "Attitudes Toward Immigrant Family in Article"
+colnames(resultsmain_1) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain_2 <- rbind(imm_viol_res, imm_starv_res)
+resultsmain_2 <- as.data.frame(resultsmain_2)
+resultsmain_2$label <- "Perceptions of Immigrants' Motivations"
+colnames(resultsmain_2) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain_3 <- rbind(policy, priority_pov, priority_v, admit, deport, risk)
+resultsmain_3 <- as.data.frame(resultsmain_3)
+resultsmain_3$label <- "Attitudes Toward Immigration Policy"
+colnames(resultsmain_3) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain <- rbind(resultsmain_1, resultsmain_2, resultsmain_3)
+colnames(resultsmain) <- c("Condition", "Effect", "SE", "DV","label")
+
+resultsmain %>% 
+  mutate(Effect = as.numeric(Effect),
+         SE = as.numeric(SE),
+         DV = as.factor(DV),
+         DV = fct_relevel(DV, c("Admit Immigrants With Lives at Risk",
+                                "Decrease Deportations", 
+                                "Admit More Immigrants", 
+                                "Prioritize Immigrants Facing Violence",
+                                "Prioritize Immigrants Facing Poverty",
+                                "Immigration Policy Index",
+                                "More Immigrants Flee Violence",
+                                "More Immigrants Flee Starvation",
+                                "Immigrant Family to Blame for Situation",
+                                "Migration Decision Involuntary", 
+                                "Admit Into Country"))) %>% 
+  
+  ggplot(aes(y = DV, x = Effect, color = Condition)) +
+  geom_point(size = 2,position=position_dodge(width=0.5)) +
+  geom_errorbar(aes(xmin = Effect - (2*SE), xmax = Effect + (2*SE)),width=.3,
+                position=position_dodge(width=0.5)) +
+  geom_vline(xintercept = 0,
+             linetype = "longdash",
+             color = "black") +
+  # facet_wrap(~Condition) +
+  labs(title=str_wrap("Comparing the Effects of Economic and Violence Threats as Reasons for Migration",45),
+       y= "Outcome Measure",
+       x="Effect Size",
+       caption = str_wrap("Note: Treatment effects using multiple regression relative to the control condition, adjusted for education and partisanship covariates. Error bars are 95% confidence intervals.",95)
+      ) +
+  theme_bw() + # Set the heights of the panels) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 50)) +
+  facet_wrap(~label, nrow=3, scales = "free_y") +
   theme(plot.title = element_text(hjust=0.5),
-        text = element_text(size=10)) +
-  scale_y_continuous(labels = scales::percent)
+        text = element_text(size=13),
+        legend.position="top") +
+  force_panelsizes(rows = c(2, 4, 1.5))
 ```
 
-The above plot shows the percentage of respondent's who selected that the were "unsure" why the Lina family traveled to the United States. The main effect of the starvation threat factor is significant (F = 15.41, p = <.001) and so is the main effect for persecution threat factor (F = 3.19, p = <.075). Respondents exposed to either or both of the factors were less likely to say they were unsure why the migrant family was travelling to the country. 
 
-## Analysis of Main Results
 
-### Attitudes Toward Hypothetical Immigrant Family
-
-```{r}
-# DV1
-dv_family_model <- lm(DV1_family ~ starvation_threat*persecution_threat + republican + education,
-             data=data)
-# Regression results
-summary(dv_family_model)
-# Anova results
-Anova(mod=dv_family_model)
-
-# DV1 - log
-dv_family_model_log <- lm(log(DV1_family) ~ starvation_threat*persecution_threat + republican + education,
-                          data=data)
-# Regression results
-summary(dv_family_model_log)
-```
-
-```{r,include = T, results=T}
-means_starv <- data %>%
-  group_by(starvation_threat) %>%
-  rename(var = starvation_threat) %>% 
-  dplyr::summarize(mean = mean(DV1_family))
-
-means_starv$factor <- "Starvation Threat"
-
-means_pers <- data %>%
-  group_by(persecution_threat) %>%
-  rename(var = persecution_threat) %>% 
-  dplyr::summarize(mean = mean(DV1_family))
-
-means_pers$factor <- "Violence Threat"
-
-means <- rbind(means_starv,means_pers)
-means$factor <- as.factor(means$factor)
-means <- means %>% 
-  mutate(var = case_when(var == 0 ~ "Absence of Factor", TRUE ~ "Presence of Factor"))
-
-ggplot(means,aes(x=var,y=mean)) + geom_point() + 
-  geom_line(group = 1) +
-  facet_wrap(~factor) +
-    labs(title="Effects of a Migrant's Reason for Migrating on Native Immigration Attitudes",
-         y="Immigration Support",x="Reason for Migrating") + 
-  theme(plot.title = element_text(hjust=0.5),
-        text = element_text(size=10))
-```
-
-The above plot shows that native's immigration attitudes are more favorable when migrants are experiencing a threat in their home country. Including education and partisanship as covariates, a 2 by 2 ANOVA reveals that the mean support for the hypothetical family of migrants was different across the presence and absence of starvation threat as a reason for migration (F = 3.95, p = .048). Because there are only two levels to the starvation threat factor and subjects reported higher mean support for the Lina family when exposed to starvation threat (3.45) than no starvation threat (3.19), I conclude that starvation threat caused a notable favorable shift in immigration attitudes. Specifically, starvation threat improved immigration attitudes by 13.7 percentage points, which is around one-third of the size of being a Republican (34.7 percent decrease).
-
-Thus, when the threats and risks associated with staying in one’s country are equalized, natives do not penalize migrants who leave their country for economic reasons relative to migrants immigrating due to fear of violence. When the consequences are dire, economic migrants are viewed just as favorably as migrants experiencing violent threats in their home country. In fact, the 2 by 2 ANOVA revealed no significant difference across the presence and absence of violence threat as a reason for migration (F = .0001, p = .994), which possibly suggests that natives are more sympathetic to starvation as a reason for migrating than violent persecution.
-
-### Attitudes Toward Immigration Policy 
-
-```{r}
-# DV2
-dv_policy_model <- lm(DV2_policy ~ starvation_threat*persecution_threat 
-                      + republican + education,
-                      data=data)
-# Regression results
-summary(dv_policy_model)
-# Anova results
-Anova(mod=dv_policy_model)
-
-# DV2 - log
-dv_policy_model_log <- lm(log(DV2_policy) ~ starvation_threat*persecution_threat 
-                          + republican + education,
-                          data=data)
-# Regression results
-summary(dv_policy_model_log)
-```
-
-Results for policy attitudes: positive effect of both factors on policy attitudes. However, neither effect is significant.
-
-### Voluntariness
-
-```{r}
-# DV3a - voluntariness
-dv_voluntary_model <- lm(DV3a_voluntary ~ starvation_threat*persecution_threat 
-                      + republican + education,
-                      data=data)
-# Regression results
-summary(dv_voluntary_model)
-# Anova results
-Anova(mod=dv_voluntary_model)
-
-# log
-dv_voluntary_model_log <- lm(log(DV3a_voluntary) ~ starvation_threat*persecution_threat 
-                          + republican + education,
-                          data=data)
-# Regression results
-summary(dv_voluntary_model_log)
-```
-
-Results for attitudes around voluntariness: positive effect of both factors on attitudes and both are significant.
-
-### Attributions of Responsibility
-
-```{r}
-# DV3b - Responsibility
-### Do separately because low Cronbach's Alpha
-
-# First question
-dv_respon_model_1 <- lm(responsibleA ~ starvation_threat*persecution_threat 
-                      + republican + education,
-                      data=data)
-# Regression results
-summary(dv_respon_model_1)
-# Anova results
-Anova(mod=dv_respon_model_1)
-
-# log
-dv_respon_model_1_log <- lm(log(responsibleA) ~ starvation_threat*persecution_threat 
-                          + republican + education,
-                          data=data)
-# Regression results
-summary(dv_respon_model_1_log)
-
-# Second question
-dv_respon_model_2 <- lm(responsibleB ~ starvation_threat*persecution_threat 
-                      + republican + education,
-                      data=data)
-# Regression results
-summary(dv_respon_model_2)
-# Anova results
-Anova(mod=dv_respon_model_2)
-
-# log
-dv_respon_model_2_log <- lm(log(responsibleB) ~ starvation_threat*persecution_threat 
-                          + republican + education,
-                          data=data)
-# Regression results
-summary(dv_respon_model_2_log)
-```
-
-Results for attitudes around attributions of responsibility: positive effect of both factors on attitudes and both are significant.
